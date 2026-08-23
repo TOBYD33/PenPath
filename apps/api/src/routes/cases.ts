@@ -5,16 +5,21 @@ import { z } from "zod";
 import {
   BIO_DATA_TEMPLATE,
   CLIENT_STATUS_LABELS,
+  EDITABLE_CASE_STATUSES,
   FORM_TYPES,
+  type CaseStatus,
   type FormTemplate,
   type FormType,
 } from "@penpath/shared";
 import { prisma } from "../lib/prisma.js";
 import { requireAuth, requirePermission, requireRole } from "../middleware/auth.js";
 import { validateFormData } from "../lib/formValidation.js";
-import { canEditCaseForms, canReadCase } from "../lib/caseAccess.js";
+import { canEditCaseForms, canReadCase, isAssignedOrOverride } from "../lib/caseAccess.js";
 import { writeAuditLog } from "../lib/audit.js";
 import { upload } from "../lib/upload.js";
+import { applyStatusTransitions } from "../lib/caseWorkflow.js";
+import { generateCasePacketPdf } from "../lib/pdf.js";
+import { notify } from "../lib/notify.js";
 
 export const casesRouter = Router();
 
@@ -438,5 +443,373 @@ casesRouter.patch("/:id/form-submissions/:formType", async (req, res) => {
   });
 
   res.json({ formSubmission: updated });
+});
+
+// ---------------------------------------------------------------------------
+// Workflow engine (Phase 5): the CaseStatus state machine, one action per
+// spec bullet. Every transition writes StatusHistory via applyStatusTransitions
+// (which also flips Case.active off once a terminal status is reached —
+// business rule 1) and fires a stub notification (business rule 2 & general
+// "notify relevant parties" requirement).
+// ---------------------------------------------------------------------------
+
+async function loadCaseForAction(id: string) {
+  return prisma.case.findUnique({
+    where: { id },
+    include: { client: true, pfa: true, pmb: true, formSubmissions: true },
+  });
+}
+
+const noteSchema = z.object({ note: z.string().optional() });
+
+/** Ops: mark "Ready for PFA Submission" — generates the PDF packet and
+ * submits. Re-callable from PFA_QUERY so a query can be answered and resent. */
+casesRouter.post("/:id/ready-for-pfa", async (req, res) => {
+  const kase = await loadCaseForAction(req.params.id);
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+  if (!isAssignedOrOverride(req.user!, kase)) return res.status(403).json({ error: "Forbidden" });
+
+  const allowedFrom: CaseStatus[] = [...EDITABLE_CASE_STATUSES, "PFA_QUERY"];
+  if (!allowedFrom.includes(kase.status)) {
+    return res.status(409).json({ error: `Cannot submit to PFA from status ${kase.status}` });
+  }
+
+  const byType = (t: FormType) => kase.formSubmissions.filter((f) => f.formType === t).sort((a, b) => b.version - a.version)[0];
+  const pdfUrl = await generateCasePacketPdf({
+    caseId: kase.id,
+    clientName: kase.client.name,
+    pfaName: kase.pfa.name,
+    pmbName: kase.pmb.name,
+    sections: [
+      { title: "Bio Data", data: (byType("bio_data")?.data as Record<string, unknown>) ?? {} },
+      { title: `${kase.pfa.name} Form`, data: (byType("pfa_form")?.data as Record<string, unknown>) ?? {} },
+      { title: `${kase.pmb.name} Form`, data: (byType("pmb_form")?.data as Record<string, unknown>) ?? {} },
+    ],
+  });
+
+  const document = await prisma.document.create({
+    data: { caseId: kase.id, type: "generated_pdf", url: pdfUrl },
+  });
+
+  const updated = await applyStatusTransitions({
+    caseId: kase.id,
+    fromStatus: kase.status,
+    steps: ["SUBMITTED_TO_PFA"],
+    changedBy: req.user!.sub,
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "SUBMITTED_TO_PFA",
+    entityType: "Case",
+    entityId: kase.id,
+    oldValue: { status: kase.status },
+    newValue: { status: updated.status, documentId: document.id },
+  });
+
+  await notify({ to: kase.client.email, subject: "Application submitted to your PFA", body: `Your application has been submitted to ${kase.pfa.name}.` });
+
+  res.json({ case: withClientLabel(updated), document });
+});
+
+const pfaOutcomeSchema = noteSchema.extend({ outcome: z.enum(["PFA_APPROVED", "PFA_QUERY", "PFA_REJECTED"]) });
+
+/** Ops: record the PFA's decision. Approval auto-advances to SUBMITTED_TO_PMB. */
+casesRouter.post("/:id/pfa-outcome", async (req, res) => {
+  const parsed = pfaOutcomeSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+
+  const kase = await loadCaseForAction(req.params.id);
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+  if (!isAssignedOrOverride(req.user!, kase)) return res.status(403).json({ error: "Forbidden" });
+  if (kase.status !== "SUBMITTED_TO_PFA") {
+    return res.status(409).json({ error: `Cannot record a PFA outcome from status ${kase.status}` });
+  }
+
+  const steps: CaseStatus[] = parsed.data.outcome === "PFA_APPROVED" ? ["PFA_APPROVED", "SUBMITTED_TO_PMB"] : [parsed.data.outcome];
+  const updated = await applyStatusTransitions({
+    caseId: kase.id,
+    fromStatus: kase.status,
+    steps,
+    changedBy: req.user!.sub,
+    note: parsed.data.note,
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "PFA_OUTCOME_RECORDED",
+    entityType: "Case",
+    entityId: kase.id,
+    oldValue: { status: kase.status },
+    newValue: { status: updated.status },
+  });
+
+  await notify({ to: kase.client.email, subject: "Update on your PFA submission", body: `Status: ${CLIENT_STATUS_LABELS[updated.status]}` });
+
+  res.json({ case: withClientLabel(updated) });
+});
+
+/** Ops: resend to the PMB after a query, without regenerating the PDF packet. */
+casesRouter.post("/:id/resubmit-to-pmb", async (req, res) => {
+  const kase = await loadCaseForAction(req.params.id);
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+  if (!isAssignedOrOverride(req.user!, kase)) return res.status(403).json({ error: "Forbidden" });
+  if (kase.status !== "PMB_QUERY") {
+    return res.status(409).json({ error: `Cannot resubmit to PMB from status ${kase.status}` });
+  }
+
+  const updated = await applyStatusTransitions({
+    caseId: kase.id,
+    fromStatus: kase.status,
+    steps: ["SUBMITTED_TO_PMB"],
+    changedBy: req.user!.sub,
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "RESUBMITTED_TO_PMB",
+    entityType: "Case",
+    entityId: kase.id,
+    oldValue: { status: kase.status },
+    newValue: { status: updated.status },
+  });
+
+  res.json({ case: withClientLabel(updated) });
+});
+
+const pmbOutcomeSchema = noteSchema.extend({ outcome: z.enum(["PMB_APPROVED", "PMB_QUERY", "PMB_REJECTED"]) });
+
+/** Ops: record the Mortgage Bank's decision. Approval auto-advances to
+ * AWAITING_FUND_RELEASE. */
+casesRouter.post("/:id/pmb-outcome", async (req, res) => {
+  const parsed = pmbOutcomeSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+
+  const kase = await loadCaseForAction(req.params.id);
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+  if (!isAssignedOrOverride(req.user!, kase)) return res.status(403).json({ error: "Forbidden" });
+  if (kase.status !== "SUBMITTED_TO_PMB") {
+    return res.status(409).json({ error: `Cannot record a PMB outcome from status ${kase.status}` });
+  }
+
+  const steps: CaseStatus[] = parsed.data.outcome === "PMB_APPROVED" ? ["PMB_APPROVED", "AWAITING_FUND_RELEASE"] : [parsed.data.outcome];
+  const updated = await applyStatusTransitions({
+    caseId: kase.id,
+    fromStatus: kase.status,
+    steps,
+    changedBy: req.user!.sub,
+    note: parsed.data.note,
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "PMB_OUTCOME_RECORDED",
+    entityType: "Case",
+    entityId: kase.id,
+    oldValue: { status: kase.status },
+    newValue: { status: updated.status },
+  });
+
+  await notify({ to: kase.client.email, subject: "Update on your Mortgage Bank submission", body: `Status: ${CLIENT_STATUS_LABELS[updated.status]}` });
+
+  res.json({ case: withClientLabel(updated) });
+});
+
+/** Client: confirms funds were released — to the mortgage lender, never to
+ * them directly (business rule 2). Notifies the assigned Ops Officer. */
+casesRouter.post("/:id/confirm-funds-received", requireRole("CLIENT"), async (req, res) => {
+  const kase = await loadCaseForAction(req.params.id);
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+  if (kase.clientId !== req.user!.sub) return res.status(403).json({ error: "Forbidden" });
+  if (kase.status !== "AWAITING_FUND_RELEASE") {
+    return res.status(409).json({ error: `Cannot confirm funds from status ${kase.status}` });
+  }
+
+  const updated = await applyStatusTransitions({
+    caseId: kase.id,
+    fromStatus: kase.status,
+    steps: ["FUNDS_RELEASED_CONFIRMED"],
+    changedBy: req.user!.sub,
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "FUNDS_RECEIVED_CONFIRMED",
+    entityType: "Case",
+    entityId: kase.id,
+    oldValue: { status: kase.status },
+    newValue: { status: updated.status },
+  });
+
+  if (kase.assignedOfficerId) {
+    const officer = await prisma.user.findUnique({ where: { id: kase.assignedOfficerId } });
+    if (officer) {
+      await notify({ to: officer.email, subject: "Client confirmed funds released", body: `Case ${kase.id} is ready for the transfer form step.` });
+    }
+  }
+
+  res.json({ case: withClientLabel(updated) });
+});
+
+/** Ops: trigger the transfer form — prompts the client to fill it in. */
+casesRouter.post("/:id/trigger-transfer-form", async (req, res) => {
+  const kase = await loadCaseForAction(req.params.id);
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+  if (!isAssignedOrOverride(req.user!, kase)) return res.status(403).json({ error: "Forbidden" });
+  if (kase.status !== "FUNDS_RELEASED_CONFIRMED") {
+    return res.status(409).json({ error: `Cannot trigger the transfer form from status ${kase.status}` });
+  }
+
+  const updated = await applyStatusTransitions({
+    caseId: kase.id,
+    fromStatus: kase.status,
+    steps: ["TRANSFER_FORM_SENT"],
+    changedBy: req.user!.sub,
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "TRANSFER_FORM_TRIGGERED",
+    entityType: "Case",
+    entityId: kase.id,
+    oldValue: { status: kase.status },
+    newValue: { status: updated.status },
+  });
+
+  await notify({ to: kase.client.email, subject: "Please complete your transfer form", body: "We need your bank details to complete the mortgage equity transfer." });
+
+  res.json({ case: withClientLabel(updated) });
+});
+
+const transferFormSchema = z.object({
+  bankName: z.string().min(1),
+  accountNumber: z.string().min(1),
+  amount: z.number().positive(),
+  mortgageRef: z.string().min(1),
+});
+
+/** Client: fills the transfer form. Submission auto-routes it into
+ * Accounting's queue (TransferForm.submittedAt and sentToAccountingAt are
+ * both stamped now — Accounting acts on it from TRANSFER_SENT_TO_ACCOUNTING). */
+casesRouter.post("/:id/transfer-form", requireRole("CLIENT"), async (req, res) => {
+  const parsed = transferFormSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+
+  const kase = await loadCaseForAction(req.params.id);
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+  if (kase.clientId !== req.user!.sub) return res.status(403).json({ error: "Forbidden" });
+  if (kase.status !== "TRANSFER_FORM_SENT") {
+    return res.status(409).json({ error: `Cannot submit a transfer form from status ${kase.status}` });
+  }
+
+  const now = new Date();
+  const transferForm = await prisma.transferForm.create({
+    data: { caseId: kase.id, ...parsed.data, submittedAt: now, sentToAccountingAt: now },
+  });
+
+  const updated = await applyStatusTransitions({
+    caseId: kase.id,
+    fromStatus: kase.status,
+    steps: ["TRANSFER_FORM_SUBMITTED", "TRANSFER_SENT_TO_ACCOUNTING"],
+    changedBy: req.user!.sub,
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "TRANSFER_FORM_SUBMITTED",
+    entityType: "TransferForm",
+    entityId: transferForm.id,
+    newValue: transferForm,
+  });
+
+  res.status(201).json({ case: withClientLabel(updated), transferForm });
+});
+
+/** Accounting: reviews the transfer form and sends it to the Mortgage Bank. */
+casesRouter.post("/:id/send-transfer-to-pmb", requirePermission("transferform:review"), async (req, res) => {
+  const kase = await loadCaseForAction(req.params.id);
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+  if (kase.status !== "TRANSFER_SENT_TO_ACCOUNTING") {
+    return res.status(409).json({ error: `Cannot send to PMB from status ${kase.status}` });
+  }
+
+  const transferForm = await prisma.transferForm.update({
+    where: { caseId: kase.id },
+    data: { sentToPmbAt: new Date() },
+  });
+
+  const updated = await applyStatusTransitions({
+    caseId: kase.id,
+    fromStatus: kase.status,
+    steps: ["TRANSFER_SENT_TO_PMB"],
+    changedBy: req.user!.sub,
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "TRANSFER_SENT_TO_PMB",
+    entityType: "TransferForm",
+    entityId: transferForm.id,
+    newValue: transferForm,
+  });
+
+  res.json({ case: withClientLabel(updated), transferForm });
+});
+
+/** Management: records the Mortgage Bank's confirmation of the transfer. */
+casesRouter.post("/:id/confirm-mortgage-bank", requireRole("MANAGEMENT", "SUPER_ADMIN"), async (req, res) => {
+  const kase = await loadCaseForAction(req.params.id);
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+  if (kase.status !== "TRANSFER_SENT_TO_PMB") {
+    return res.status(409).json({ error: `Cannot confirm the Mortgage Bank from status ${kase.status}` });
+  }
+
+  const updated = await applyStatusTransitions({
+    caseId: kase.id,
+    fromStatus: kase.status,
+    steps: ["MORTGAGE_BANK_CONFIRMED"],
+    changedBy: req.user!.sub,
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "MORTGAGE_BANK_CONFIRMED",
+    entityType: "Case",
+    entityId: kase.id,
+    oldValue: { status: kase.status },
+    newValue: { status: updated.status },
+  });
+
+  res.json({ case: withClientLabel(updated) });
+});
+
+/** Management: processes the payout and closes the case — visible to
+ * Accounting and Ops simultaneously via their normal cross-case read access. */
+casesRouter.post("/:id/process-payout", requireRole("MANAGEMENT", "SUPER_ADMIN"), async (req, res) => {
+  const kase = await loadCaseForAction(req.params.id);
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+  if (kase.status !== "MORTGAGE_BANK_CONFIRMED") {
+    return res.status(409).json({ error: `Cannot process payout from status ${kase.status}` });
+  }
+
+  const updated = await applyStatusTransitions({
+    caseId: kase.id,
+    fromStatus: kase.status,
+    steps: ["MANAGEMENT_PAYOUT_PROCESSED", "CASE_CLOSED"],
+    changedBy: req.user!.sub,
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "PAYOUT_PROCESSED",
+    entityType: "Case",
+    entityId: kase.id,
+    oldValue: { status: kase.status },
+    newValue: { status: updated.status },
+  });
+
+  await notify({ to: kase.client.email, subject: "Your case is closed", body: "Your mortgage equity payout has been processed. Thank you." });
+
+  res.json({ case: withClientLabel(updated) });
 });
 

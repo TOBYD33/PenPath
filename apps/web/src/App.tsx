@@ -7,6 +7,7 @@ import Institutions from "./pages/admin/Institutions";
 import ScanIntake from "./pages/ops/ScanIntake";
 import MyCases from "./pages/ops/MyCases";
 import CaseAssignment from "./pages/supervisor/CaseAssignment";
+import CaseDetail from "./pages/CaseDetail";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
 export default function App() {
@@ -15,6 +16,7 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route element={<ProtectedRoute />}>
         <Route path="/" element={<Dashboard />} />
+        <Route path="/cases/:id" element={<CaseDetail />} />
       </Route>
       <Route element={<ProtectedRoute allowedRoles={["OPS_OFFICER"]} />}>
         <Route path="/my-cases" element={<MyCases />} />

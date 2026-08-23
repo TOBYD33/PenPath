@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Link } from "react-router-dom";
 import { AppShell } from "../../components/AppShell";
 import { api, ApiError } from "../../lib/api";
 
@@ -55,7 +56,11 @@ export default function MyCases() {
             ) : (
               cases.map((c) => (
                 <tr key={c.id} className="border-b border-border last:border-0">
-                  <td className="px-4 py-3 text-text-primary">{c.client.name}</td>
+                  <td className="px-4 py-3 text-text-primary">
+                    <Link to={`/cases/${c.id}`} className="text-accent hover:text-accent-light">
+                      {c.client.name}
+                    </Link>
+                  </td>
                   <td className="px-4 py-3 text-text-muted">{c.pfa.name}</td>
                   <td className="px-4 py-3 text-text-muted">{c.pmb.name}</td>
                   <td className="px-4 py-3">
