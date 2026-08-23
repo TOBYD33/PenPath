@@ -5,6 +5,7 @@ import { useAuth } from "../lib/auth";
 
 const navItems: { to: string; label: string; roles: Role[] | null }[] = [
   { to: "/", label: "Dashboard", roles: null },
+  { to: "/scan-intake", label: "Scan Intake", roles: ["OPS_OFFICER", "OPS_SUPERVISOR", "ADMIN", "SUPER_ADMIN"] },
   { to: "/admin/institutions", label: "Institutions", roles: ["ADMIN", "SUPER_ADMIN"] },
   { to: "/admin/users", label: "Users", roles: ["SUPER_ADMIN"] },
   { to: "/admin/audit-log", label: "Audit Log", roles: ["SUPER_ADMIN"] },

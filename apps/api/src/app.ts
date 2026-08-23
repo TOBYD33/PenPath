@@ -6,11 +6,14 @@ import { usersRouter } from "./routes/users.js";
 import { auditLogRouter } from "./routes/auditLog.js";
 import { institutionsRouter } from "./routes/institutions.js";
 import { settingsRouter } from "./routes/settings.js";
+import { casesRouter } from "./routes/cases.js";
+import { UPLOADS_DIR } from "./lib/upload.js";
 
 export function createApp() {
   const app = express();
   app.use(cors({ origin: env.CORS_ORIGIN }));
   app.use(express.json());
+  app.use("/uploads", express.static(UPLOADS_DIR));
 
   app.get("/health", (_req, res) => res.json({ status: "ok" }));
   app.use("/api/auth", authRouter);
@@ -18,6 +21,7 @@ export function createApp() {
   app.use("/api/audit-logs", auditLogRouter);
   app.use("/api/institutions", institutionsRouter);
   app.use("/api/settings", settingsRouter);
+  app.use("/api/cases", casesRouter);
 
   return app;
 }

@@ -88,3 +88,27 @@ export interface FormFieldDef {
 }
 
 export type FormTemplate = FormFieldDef[];
+
+export const FORM_TYPES = ["bio_data", "pfa_form", "pmb_form"] as const;
+export type FormType = (typeof FORM_TYPES)[number];
+
+/** Fixed template for the client bio-data form — same schema on both the
+ * digital intake and Ops scan-intake re-keying paths (business rule 5). */
+export const BIO_DATA_TEMPLATE: FormTemplate = [
+  { key: "full_name", label: "Full name", type: "text", required: true },
+  { key: "date_of_birth", label: "Date of birth", type: "date", required: true },
+  { key: "nin", label: "National Identification Number (NIN)", type: "text", required: true },
+  { key: "phone", label: "Phone number", type: "text", required: true },
+  { key: "email", label: "Email address", type: "text", required: false },
+  { key: "residential_address", label: "Residential address", type: "textarea", required: true },
+  { key: "employer_name", label: "Employer / last employer", type: "text", required: false },
+  { key: "rsa_pin", label: "RSA PIN", type: "text", required: true },
+];
+
+/** Statuses in which a case's forms may still be edited by the assigned
+ * Ops Officer (or a Supervisor/Admin/Super Admin override) — business rule 6. */
+export const EDITABLE_CASE_STATUSES: CaseStatus[] = [
+  "NEW_APPLICATION",
+  "BIO_DATA_SUBMITTED",
+  "UNDER_OPS_REVIEW",
+];
