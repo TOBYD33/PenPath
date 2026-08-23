@@ -73,3 +73,18 @@ export const CLIENT_STATUS_LABELS: Record<CaseStatus, string> = {
 };
 
 export const TERMINAL_CASE_STATUSES: CaseStatus[] = ["CASE_CLOSED", "PFA_REJECTED", "PMB_REJECTED"];
+
+export const FORM_FIELD_TYPES = ["text", "textarea", "number", "date", "select", "checkbox"] as const;
+export type FormFieldType = (typeof FORM_FIELD_TYPES)[number];
+
+/** A single field in an Institution's dynamic form template (Institution.formTemplate). */
+export interface FormFieldDef {
+  key: string;
+  label: string;
+  type: FormFieldType;
+  required: boolean;
+  /** Only meaningful when type === "select". */
+  options?: string[];
+}
+
+export type FormTemplate = FormFieldDef[];

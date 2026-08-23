@@ -52,6 +52,17 @@ model UserPermission {
   @@unique([userId, permission])
 }
 
+/// Org-wide fee defaults (Section 2/6.3), Admin-editable. Singleton: always
+/// the single oldest row; new Cases read this at creation time.
+model FeeDefault {
+  id         String   @id @default(cuid())
+  feeFlat    Decimal  @default(100000)
+  feePercent Decimal  @default(8)
+  feeBasis   FeeBasis @default(ACCESSED_AMOUNT)
+  updatedAt  DateTime @updatedAt
+  updatedBy  String?
+}
+
 model Institution {
   id           String   @id @default(cuid())
   type         InstitutionType

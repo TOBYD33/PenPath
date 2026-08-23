@@ -3,6 +3,7 @@ import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
 import Users from "./pages/admin/Users";
 import AuditLog from "./pages/admin/AuditLog";
+import Institutions from "./pages/admin/Institutions";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
 export default function App() {
@@ -11,6 +12,9 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route element={<ProtectedRoute />}>
         <Route path="/" element={<Dashboard />} />
+      </Route>
+      <Route element={<ProtectedRoute allowedRoles={["ADMIN", "SUPER_ADMIN"]} />}>
+        <Route path="/admin/institutions" element={<Institutions />} />
       </Route>
       <Route element={<ProtectedRoute allowedRoles={["SUPER_ADMIN"]} />}>
         <Route path="/admin/users" element={<Users />} />
