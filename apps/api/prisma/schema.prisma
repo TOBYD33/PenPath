@@ -1,0 +1,211 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id             String   @id @default(cuid())
+  name           String
+  email          String   @unique
+  phone          String?
+  passwordHash   String
+  role           Role
+  active         Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  maxCaseLoad    Int?     @default(6) // only relevant for Ops role, Supervisor-editable
+
+  casesAssigned  Case[]   @relation("AssignedOfficer")
+  casesAsClient  Case[]   @relation("ClientCases")
+  permissions    UserPermission[]
+  auditLogs      AuditLog[]
+  complaintsRaised Complaint[] @relation("ComplaintRaisedBy")
+  complaintsAssigned Complaint[] @relation("ComplaintAssignedOfficer")
+}
+
+enum Role {
+  CLIENT
+  CUSTOMER_CARE
+  OPS_OFFICER
+  OPS_SUPERVISOR
+  ACCOUNTING
+  MANAGEMENT
+  ADMIN
+  SUPER_ADMIN
+}
+
+/// Per-user permission grant/revoke, layered on top of role defaults
+/// (role defaults live in @penpath/shared, not the DB, so Super Admin
+/// can override without a schema change).
+model UserPermission {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  permission String
+  granted    Boolean  @default(true) // true = grant, false = explicit revoke of a role default
+  createdAt  DateTime @default(now())
+
+  @@unique([userId, permission])
+}
+
+model Institution {
+  id           String   @id @default(cuid())
+  type         InstitutionType
+  name         String
+  active       Boolean  @default(true)
+  formTemplate Json
+  createdAt    DateTime @default(now())
+
+  casesAsPfa   Case[]   @relation("PFA")
+  casesAsPmb   Case[]   @relation("PMB")
+}
+
+enum InstitutionType {
+  PFA
+  PMB
+}
+
+model Case {
+  id                String   @id @default(cuid())
+  clientId          String
+  client            User     @relation("ClientCases", fields: [clientId], references: [id])
+  pfaId             String
+  pfa               Institution @relation("PFA", fields: [pfaId], references: [id])
+  pmbId             String
+  pmb               Institution @relation("PMB", fields: [pmbId], references: [id])
+  assignedOfficerId String?
+  assignedOfficer   User?    @relation("AssignedOfficer", fields: [assignedOfficerId], references: [id])
+  intakeSource      IntakeSource
+  status            CaseStatus @default(NEW_APPLICATION)
+  pensionBalance    Decimal?
+  dealValue         Decimal?
+  feeFlat           Decimal  @default(100000)
+  feePercent        Decimal  @default(8)
+  feeBasis          FeeBasis @default(ACCESSED_AMOUNT)
+  feeTotal          Decimal?
+  feeManuallyEdited Boolean  @default(false)
+  active            Boolean  @default(true) // false once a terminal status is reached; enforces one-active-case rule
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  formSubmissions   FormSubmission[]
+  documents         Document[]
+  statusHistory     StatusHistory[]
+  complaints        Complaint[]
+  transferForm      TransferForm?
+}
+
+enum IntakeSource {
+  DIGITAL_LINK
+  PHYSICAL_SCAN
+}
+
+enum CaseStatus {
+  NEW_APPLICATION
+  BIO_DATA_SUBMITTED
+  UNDER_OPS_REVIEW
+  SUBMITTED_TO_PFA
+  PFA_APPROVED
+  PFA_QUERY
+  PFA_REJECTED
+  SUBMITTED_TO_PMB
+  PMB_APPROVED
+  PMB_QUERY
+  PMB_REJECTED
+  AWAITING_FUND_RELEASE
+  FUNDS_RELEASED_CONFIRMED
+  TRANSFER_FORM_SENT
+  TRANSFER_FORM_SUBMITTED
+  TRANSFER_SENT_TO_ACCOUNTING
+  TRANSFER_SENT_TO_PMB
+  MORTGAGE_BANK_CONFIRMED
+  MANAGEMENT_PAYOUT_PROCESSED
+  CASE_CLOSED
+}
+
+enum FeeBasis {
+  ACCESSED_AMOUNT
+  FULL_BALANCE
+}
+
+model FormSubmission {
+  id        String   @id @default(cuid())
+  caseId    String
+  case      Case     @relation(fields: [caseId], references: [id])
+  formType  String
+  data      Json
+  version   Int      @default(1)
+  editedBy  String?
+  editedAt  DateTime?
+  createdAt DateTime @default(now())
+}
+
+model Document {
+  id        String   @id @default(cuid())
+  caseId    String
+  case      Case     @relation(fields: [caseId], references: [id])
+  type      String
+  url       String
+  version   Int      @default(1)
+  createdAt DateTime @default(now())
+}
+
+model StatusHistory {
+  id         String   @id @default(cuid())
+  caseId     String
+  case       Case     @relation(fields: [caseId], references: [id])
+  fromStatus CaseStatus?
+  toStatus   CaseStatus
+  changedBy  String
+  note       String?
+  createdAt  DateTime @default(now())
+}
+
+model TransferForm {
+  id                 String   @id @default(cuid())
+  caseId             String   @unique
+  case               Case     @relation(fields: [caseId], references: [id])
+  bankName           String
+  accountNumber      String
+  amount             Decimal
+  mortgageRef        String
+  submittedAt        DateTime?
+  sentToAccountingAt DateTime?
+  sentToPmbAt        DateTime?
+}
+
+model Complaint {
+  id                String   @id @default(cuid())
+  caseId            String
+  case              Case     @relation(fields: [caseId], references: [id])
+  raisedById        String
+  raisedBy          User     @relation("ComplaintRaisedBy", fields: [raisedById], references: [id])
+  assignedOfficerId String?
+  assignedOfficer   User?    @relation("ComplaintAssignedOfficer", fields: [assignedOfficerId], references: [id])
+  status            ComplaintStatus @default(OPEN)
+  description       String
+  resolutionNote    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+}
+
+enum ComplaintStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+}
+
+model AuditLog {
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  action     String
+  entityType String
+  entityId   String
+  oldValue   Json?
+  newValue   Json?
+  createdAt  DateTime @default(now())
+}

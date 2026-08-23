@@ -1,0 +1,20 @@
+{
+  "name": "penpath",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @penpath/api dev",
+    "dev:web": "pnpm --filter @penpath/web dev",
+    "build": "pnpm --filter @penpath/shared build && pnpm --filter @penpath/api build && pnpm --filter @penpath/web build",
+    "test": "pnpm --filter @penpath/api test",
+    "prisma:generate": "pnpm --filter @penpath/api prisma:generate",
+    "prisma:migrate": "pnpm --filter @penpath/api prisma:migrate",
+    "seed": "pnpm --filter @penpath/api seed"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "pnpm": {
+    "onlyBuiltDependencies": ["@prisma/client", "@prisma/engines", "prisma", "esbuild"]
+  }
+}
