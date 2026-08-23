@@ -4,17 +4,11 @@ import { FEE_BASES } from "@penpath/shared";
 import { prisma } from "../lib/prisma.js";
 import { requireAuth, requirePermission } from "../middleware/auth.js";
 import { writeAuditLog } from "../lib/audit.js";
+import { getOrCreateFeeDefault } from "../lib/feeEngine.js";
 
 export const settingsRouter = Router();
 
 settingsRouter.use(requireAuth);
-
-/** Singleton row: create it on first read if it doesn't exist yet. */
-async function getOrCreateFeeDefault() {
-  const existing = await prisma.feeDefault.findFirst({ orderBy: { updatedAt: "asc" } });
-  if (existing) return existing;
-  return prisma.feeDefault.create({ data: {} });
-}
 
 settingsRouter.get("/fee-defaults", async (_req, res) => {
   const feeDefault = await getOrCreateFeeDefault();

@@ -16,6 +16,7 @@ export const PERMISSIONS = [
   "dashboard:revenue",
   "dashboard:activity",
   "case:override",
+  "fee:override",
 ] as const;
 export type Permission = (typeof PERMISSIONS)[number];
 
@@ -26,14 +27,15 @@ export const DEFAULT_ROLE_PERMISSIONS: Record<Role, Permission[]> = {
   CUSTOMER_CARE: ["case:read:all", "complaint:manage"],
   OPS_OFFICER: ["case:read:assigned", "case:edit:assigned"],
   OPS_SUPERVISOR: ["case:read:all", "case:assign", "dashboard:activity"],
-  ACCOUNTING: ["case:read:all", "transferform:review"],
-  MANAGEMENT: ["case:read:all", "dashboard:revenue", "dashboard:activity"],
+  ACCOUNTING: ["case:read:all", "transferform:review", "fee:override"],
+  MANAGEMENT: ["case:read:all", "dashboard:revenue", "dashboard:activity", "fee:override"],
   ADMIN: ["institution:manage", "case:read:all"],
   SUPER_ADMIN: [
     "case:read:all",
     "case:edit:all",
     "case:assign",
     "case:override",
+    "fee:override",
     "institution:manage",
     "user:manage",
     "permission:manage",

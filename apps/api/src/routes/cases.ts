@@ -20,6 +20,7 @@ import { upload } from "../lib/upload.js";
 import { applyStatusTransitions } from "../lib/caseWorkflow.js";
 import { generateCasePacketPdf } from "../lib/pdf.js";
 import { notify } from "../lib/notify.js";
+import { computeFeeTotal, getOrCreateFeeDefault } from "../lib/feeEngine.js";
 
 export const casesRouter = Router();
 
@@ -211,12 +212,17 @@ async function createCaseWithForms(params: {
   pmbForm: unknown;
   createdBy: string;
 }) {
+  const feeDefault = await getOrCreateFeeDefault();
+
   const kase = await prisma.case.create({
     data: {
       clientId: params.clientId,
       pfaId: params.pfaId,
       pmbId: params.pmbId,
       intakeSource: params.intakeSource,
+      feeFlat: feeDefault.feeFlat,
+      feePercent: feeDefault.feePercent,
+      feeBasis: feeDefault.feeBasis,
       formSubmissions: {
         create: [
           { formType: "bio_data", data: params.bioData as object, version: 1 },
@@ -809,6 +815,81 @@ casesRouter.post("/:id/process-payout", requireRole("MANAGEMENT", "SUPER_ADMIN")
   });
 
   await notify({ to: kase.client.email, subject: "Your case is closed", body: "Your mortgage equity payout has been processed. Thank you." });
+
+  res.json({ case: withClientLabel(updated) });
+});
+
+// ---------------------------------------------------------------------------
+// Fee engine (Phase 6, business rule 3): feeTotal = feeFlat + feePercent% x
+// dealValue, recalculated whenever dealValue changes — unless the fee has
+// been manually overridden, in which case it is never silently recalculated.
+// ---------------------------------------------------------------------------
+
+const financialsSchema = z.object({
+  dealValue: z.number().nonnegative().optional(),
+  pensionBalance: z.number().nonnegative().optional(),
+});
+
+/** Ops (assigned/override) or Accounting/Management record the pensioner's
+ * balance and the deal value the fee is calculated against. */
+casesRouter.patch("/:id/financials", async (req, res) => {
+  const parsed = financialsSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+  if (Object.keys(parsed.data).length === 0) return res.status(400).json({ error: "No fields to update" });
+
+  const kase = await prisma.case.findUnique({ where: { id: req.params.id } });
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+
+  const allowed = isAssignedOrOverride(req.user!, kase) || ["ACCOUNTING", "MANAGEMENT", "SUPER_ADMIN"].includes(req.user!.role);
+  if (!allowed) return res.status(403).json({ error: "Forbidden" });
+
+  const dealValue = parsed.data.dealValue ?? (kase.dealValue !== null ? Number(kase.dealValue) : undefined);
+  const feeTotal =
+    !kase.feeManuallyEdited && dealValue !== undefined
+      ? computeFeeTotal(Number(kase.feeFlat), Number(kase.feePercent), dealValue)
+      : undefined;
+
+  const updated = await prisma.case.update({
+    where: { id: kase.id },
+    data: { ...parsed.data, ...(feeTotal !== undefined ? { feeTotal } : {}) },
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "CASE_FINANCIALS_UPDATED",
+    entityType: "Case",
+    entityId: kase.id,
+    oldValue: { dealValue: kase.dealValue, pensionBalance: kase.pensionBalance, feeTotal: kase.feeTotal },
+    newValue: { dealValue: updated.dealValue, pensionBalance: updated.pensionBalance, feeTotal: updated.feeTotal },
+  });
+
+  res.json({ case: withClientLabel(updated) });
+});
+
+const feeOverrideSchema = z.object({ feeTotal: z.number().nonnegative(), note: z.string().optional() });
+
+/** Accounting/Management manual override — always audit-logged, and once
+ * set, dealValue changes no longer auto-recalculate feeTotal. */
+casesRouter.patch("/:id/fee", requirePermission("fee:override"), async (req, res) => {
+  const parsed = feeOverrideSchema.safeParse(req.body);
+  if (!parsed.success) return res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+
+  const kase = await prisma.case.findUnique({ where: { id: req.params.id } });
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+
+  const updated = await prisma.case.update({
+    where: { id: kase.id },
+    data: { feeTotal: parsed.data.feeTotal, feeManuallyEdited: true },
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "FEE_MANUALLY_OVERRIDDEN",
+    entityType: "Case",
+    entityId: kase.id,
+    oldValue: { feeTotal: kase.feeTotal, feeManuallyEdited: kase.feeManuallyEdited },
+    newValue: { feeTotal: updated.feeTotal, feeManuallyEdited: updated.feeManuallyEdited, note: parsed.data.note },
+  });
 
   res.json({ case: withClientLabel(updated) });
 });

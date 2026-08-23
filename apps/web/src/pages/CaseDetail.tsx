@@ -39,6 +39,13 @@ interface CaseDetailData {
   formSubmissions: FormSubmission[];
   documents: Document[];
   statusHistory: StatusHistoryEntry[];
+  pensionBalance: string | null;
+  dealValue: string | null;
+  feeFlat: string;
+  feePercent: string;
+  feeBasis: "ACCESSED_AMOUNT" | "FULL_BALANCE";
+  feeTotal: string | null;
+  feeManuallyEdited: boolean;
 }
 
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
@@ -122,6 +129,14 @@ export default function CaseDetail() {
         {error && <p className="text-sm text-status-error">{error}</p>}
 
         <WorkflowActions status={data.status} role={user?.role} isOwnOrOverride={isOwnOrOverride} busy={busy} act={act} />
+
+        <FinancialsPanel
+          data={data}
+          canEditFinancials={isOwnOrOverride || ["ACCOUNTING", "MANAGEMENT", "SUPER_ADMIN"].includes(user?.role ?? "")}
+          canOverrideFee={["ACCOUNTING", "MANAGEMENT", "SUPER_ADMIN"].includes(user?.role ?? "")}
+          onSaved={reload}
+          onError={setError}
+        />
 
         <div className="bg-bg-base border border-border rounded-lg p-6">
           <h2 className="text-sm font-semibold text-text-primary mb-3">Documents</h2>
@@ -273,6 +288,130 @@ function WorkflowActions({
   }
 
   return null;
+}
+
+function FinancialsPanel({
+  data,
+  canEditFinancials,
+  canOverrideFee,
+  onSaved,
+  onError,
+}: {
+  data: CaseDetailData;
+  canEditFinancials: boolean;
+  canOverrideFee: boolean;
+  onSaved: () => void;
+  onError: (msg: string) => void;
+}) {
+  const [pensionBalance, setPensionBalance] = useState(data.pensionBalance ?? "");
+  const [dealValue, setDealValue] = useState(data.dealValue ?? "");
+  const [feeOverride, setFeeOverride] = useState(data.feeTotal ?? "");
+  const [savingFinancials, setSavingFinancials] = useState(false);
+  const [savingFee, setSavingFee] = useState(false);
+
+  async function saveFinancials() {
+    setSavingFinancials(true);
+    try {
+      const body: Record<string, number> = {};
+      if (pensionBalance !== "") body.pensionBalance = Number(pensionBalance);
+      if (dealValue !== "") body.dealValue = Number(dealValue);
+      await api.patch(`/api/cases/${data.id}/financials`, body);
+      onSaved();
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message : "Failed to save financials");
+    } finally {
+      setSavingFinancials(false);
+    }
+  }
+
+  async function saveFeeOverride() {
+    setSavingFee(true);
+    try {
+      await api.patch(`/api/cases/${data.id}/fee`, { feeTotal: Number(feeOverride) });
+      onSaved();
+    } catch (err) {
+      onError(err instanceof ApiError ? err.message : "Failed to override fee");
+    } finally {
+      setSavingFee(false);
+    }
+  }
+
+  return (
+    <div className="bg-bg-base border border-border rounded-lg p-6">
+      <h2 className="text-sm font-semibold text-text-primary mb-3">Financials</h2>
+
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 mb-4">
+        <div>
+          <div className="text-xs text-text-muted mb-1">Pension balance</div>
+          {canEditFinancials ? (
+            <input
+              type="number"
+              value={pensionBalance}
+              onChange={(e) => setPensionBalance(e.target.value)}
+              className="w-full border border-border rounded-md px-2 py-1 text-sm"
+            />
+          ) : (
+            <div className="text-sm text-text-primary">{data.pensionBalance ?? "—"}</div>
+          )}
+        </div>
+        <div>
+          <div className="text-xs text-text-muted mb-1">Deal value</div>
+          {canEditFinancials ? (
+            <input
+              type="number"
+              value={dealValue}
+              onChange={(e) => setDealValue(e.target.value)}
+              className="w-full border border-border rounded-md px-2 py-1 text-sm"
+            />
+          ) : (
+            <div className="text-sm text-text-primary">{data.dealValue ?? "—"}</div>
+          )}
+        </div>
+        <div>
+          <div className="text-xs text-text-muted mb-1">Fee basis</div>
+          <div className="text-sm text-text-primary">{data.feeBasis === "ACCESSED_AMOUNT" ? "Accessed amount" : "Full balance"}</div>
+        </div>
+        <div>
+          <div className="text-xs text-text-muted mb-1">Fee total</div>
+          <div className="text-sm font-medium text-brand-primary">
+            {data.feeTotal ?? "—"}
+            {data.feeManuallyEdited && <span className="ml-1 text-xs text-accent">(manual)</span>}
+          </div>
+        </div>
+      </div>
+
+      {canEditFinancials && (
+        <button
+          onClick={saveFinancials}
+          disabled={savingFinancials}
+          className="bg-brand-primary hover:bg-brand-dark text-white text-xs font-medium rounded-md px-3 py-1.5 disabled:opacity-60"
+        >
+          {savingFinancials ? "Saving…" : "Save pension balance & deal value"}
+        </button>
+      )}
+
+      {canOverrideFee && (
+        <div className="mt-4 pt-4 border-t border-border flex items-end gap-2">
+          <div>
+            <label className="block text-xs font-medium text-text-muted mb-1">Manual fee override (₦)</label>
+            <input
+              type="number"
+              value={feeOverride}
+              onChange={(e) => setFeeOverride(e.target.value)}
+              className="border border-border rounded-md px-2 py-1 text-sm w-40"
+            />
+          </div>
+          <button
+            onClick={saveFeeOverride}
+            disabled={savingFee || feeOverride === ""}
+            className="bg-accent hover:bg-accent-light text-white text-xs font-medium rounded-md px-3 py-1.5 disabled:opacity-60"
+          >
+            {savingFee ? "Saving…" : "Override fee"}
+          </button>
+        </div>
+      )}
+    </div>
+  );
 }
 
 function ActionPanel({ title, children }: { title: string; children: React.ReactNode }) {
