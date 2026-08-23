@@ -10,7 +10,7 @@ import {
   type FormType,
 } from "@penpath/shared";
 import { prisma } from "../lib/prisma.js";
-import { requireAuth, requireRole } from "../middleware/auth.js";
+import { requireAuth, requirePermission, requireRole } from "../middleware/auth.js";
 import { validateFormData } from "../lib/formValidation.js";
 import { canEditCaseForms, canReadCase } from "../lib/caseAccess.js";
 import { writeAuditLog } from "../lib/audit.js";
@@ -53,6 +53,109 @@ casesRouter.get("/", async (req, res) => {
     orderBy: { createdAt: "desc" },
   });
   res.json({ cases: cases.map(withClientLabel) });
+});
+
+/** Supervisor queue: active cases with no Ops Officer assigned yet. */
+casesRouter.get("/unassigned", requirePermission("case:assign"), async (_req, res) => {
+  const cases = await prisma.case.findMany({
+    where: { assignedOfficerId: null, active: true },
+    include: caseListInclude,
+    orderBy: { createdAt: "asc" },
+  });
+  res.json({ cases: cases.map(withClientLabel) });
+});
+
+/** Ops Officer workload, for the Supervisor to see capacity before assigning. */
+casesRouter.get("/ops-officers", requirePermission("case:assign"), async (_req, res) => {
+  const officers = await prisma.user.findMany({
+    where: { role: "OPS_OFFICER", active: true },
+    select: { id: true, name: true, email: true, maxCaseLoad: true },
+    orderBy: { name: "asc" },
+  });
+  const counts = await prisma.case.groupBy({
+    by: ["assignedOfficerId"],
+    where: { assignedOfficerId: { in: officers.map((o) => o.id) }, active: true },
+    _count: { _all: true },
+  });
+  const countByOfficer = new Map(counts.map((c) => [c.assignedOfficerId, c._count._all]));
+  res.json({
+    officers: officers.map((o) => ({ ...o, currentCaseLoad: countByOfficer.get(o.id) ?? 0 })),
+  });
+});
+
+const maxCaseLoadSchema = z.object({ maxCaseLoad: z.number().int().positive() });
+
+/** Supervisor sets per-officer case caps (default 6), scoped narrowly to
+ * this one field so Supervisors don't need full user:manage rights. */
+casesRouter.patch("/ops-officers/:id/max-case-load", requirePermission("case:assign"), async (req, res) => {
+  const parsed = maxCaseLoadSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+  }
+
+  const officer = await prisma.user.findUnique({ where: { id: req.params.id } });
+  if (!officer || officer.role !== "OPS_OFFICER") {
+    return res.status(404).json({ error: "Ops Officer not found" });
+  }
+
+  const updated = await prisma.user.update({
+    where: { id: officer.id },
+    data: { maxCaseLoad: parsed.data.maxCaseLoad },
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "MAX_CASE_LOAD_UPDATED",
+    entityType: "User",
+    entityId: officer.id,
+    oldValue: { maxCaseLoad: officer.maxCaseLoad },
+    newValue: { maxCaseLoad: updated.maxCaseLoad },
+  });
+
+  res.json({ officer: { id: updated.id, name: updated.name, maxCaseLoad: updated.maxCaseLoad } });
+});
+
+const assignCaseSchema = z.object({ officerId: z.string().min(1) });
+
+/** Manual assignment/reassignment, enforcing each officer's maxCaseLoad. */
+casesRouter.post("/:id/assign", requirePermission("case:assign"), async (req, res) => {
+  const parsed = assignCaseSchema.safeParse(req.body);
+  if (!parsed.success) {
+    return res.status(400).json({ error: "Invalid request body", details: parsed.error.flatten() });
+  }
+
+  const kase = await prisma.case.findUnique({ where: { id: req.params.id } });
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+
+  const officer = await prisma.user.findUnique({ where: { id: parsed.data.officerId } });
+  if (!officer || officer.role !== "OPS_OFFICER" || !officer.active) {
+    return res.status(400).json({ error: "Target user is not an active Ops Officer" });
+  }
+
+  const currentLoad = await prisma.case.count({
+    where: { assignedOfficerId: officer.id, active: true, id: { not: kase.id } },
+  });
+  const cap = officer.maxCaseLoad ?? 6;
+  if (currentLoad >= cap) {
+    return res.status(409).json({ error: `${officer.name} is already at their case load cap (${cap})` });
+  }
+
+  const updated = await prisma.case.update({
+    where: { id: kase.id },
+    data: { assignedOfficerId: officer.id },
+    include: caseListInclude,
+  });
+
+  await writeAuditLog({
+    userId: req.user!.sub,
+    action: "CASE_ASSIGNED",
+    entityType: "Case",
+    entityId: kase.id,
+    oldValue: { assignedOfficerId: kase.assignedOfficerId },
+    newValue: { assignedOfficerId: officer.id },
+  });
+
+  res.json({ case: withClientLabel(updated) });
 });
 
 casesRouter.get("/:id", async (req, res) => {
