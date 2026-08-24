@@ -22,12 +22,14 @@ model User {
 
   casesAssigned  Case[]   @relation("AssignedOfficer")
   casesAsClient  Case[]   @relation("ClientCases")
+  casesAssignedBy Case[]  @relation("CaseAssignedBy")
   permissions    UserPermission[]
   auditLogs      AuditLog[]
   complaintsRaised Complaint[] @relation("ComplaintRaisedBy")
   complaintsAssigned Complaint[] @relation("ComplaintAssignedOfficer")
   complaintsResolved Complaint[] @relation("ComplaintResolvedBy")
   passwordResetTokens PasswordResetToken[]
+  linksGenerated ClientLink[] @relation("LinkGeneratedBy")
 }
 
 enum Role {
@@ -93,6 +95,8 @@ model Case {
   pmb               Institution @relation("PMB", fields: [pmbId], references: [id])
   assignedOfficerId String?
   assignedOfficer   User?    @relation("AssignedOfficer", fields: [assignedOfficerId], references: [id])
+  assignedById      String?  // who performed the assignment: Supervisor, Admin, or Super Admin
+  assignedBy        User?    @relation("CaseAssignedBy", fields: [assignedById], references: [id])
   intakeSource      IntakeSource
   status            CaseStatus @default(NEW_APPLICATION)
   pensionBalance    Decimal?
@@ -111,6 +115,7 @@ model Case {
   statusHistory     StatusHistory[]
   complaints        Complaint[]
   transferForm      TransferForm?
+  clientLink        ClientLink?
 }
 
 enum IntakeSource {
@@ -238,4 +243,32 @@ model PasswordResetToken {
   expiresAt DateTime
   usedAt    DateTime?
   createdAt DateTime  @default(now())
+}
+
+/// A trackable, single-use, expirable link an internal user can generate so
+/// a client can submit their intake remotely. Unlike PasswordResetToken,
+/// this token is looked up directly (not hashed) since it's meant to be
+/// shared as a URL and re-validated on every /api/apply/:token hit, not
+/// just consumed once client-side.
+model ClientLink {
+  id            String     @id @default(cuid())
+  token         String     @unique
+  generatedById String
+  generatedBy   User       @relation("LinkGeneratedBy", fields: [generatedById], references: [id])
+  clientName    String?
+  clientPhone   String?
+  clientEmail   String?
+  status        LinkStatus @default(UNUSED)
+  expiresAt     DateTime
+  usedAt        DateTime?
+  caseId        String?    @unique
+  case          Case?      @relation(fields: [caseId], references: [id])
+  createdAt     DateTime   @default(now())
+}
+
+enum LinkStatus {
+  UNUSED
+  USED
+  EXPIRED
+  REVOKED
 }

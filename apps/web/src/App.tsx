@@ -2,6 +2,7 @@ import { Route, Routes } from "react-router-dom";
 import Login from "./pages/Login";
 import ForgotPassword from "./pages/ForgotPassword";
 import ResetPassword from "./pages/ResetPassword";
+import ApplyPage from "./pages/ApplyPage";
 import Dashboard from "./pages/Dashboard";
 import Users from "./pages/admin/Users";
 import AuditLog from "./pages/admin/AuditLog";
@@ -11,6 +12,7 @@ import MyCases from "./pages/ops/MyCases";
 import CaseAssignment from "./pages/supervisor/CaseAssignment";
 import CaseDetail from "./pages/CaseDetail";
 import Complaints from "./pages/Complaints";
+import GenerateLink from "./pages/GenerateLink";
 import RevenueDashboard from "./pages/management/RevenueDashboard";
 import ActivityDashboard from "./pages/management/ActivityDashboard";
 import { ProtectedRoute } from "./components/ProtectedRoute";
@@ -21,6 +23,7 @@ export default function App() {
       <Route path="/login" element={<Login />} />
       <Route path="/forgot-password" element={<ForgotPassword />} />
       <Route path="/reset-password" element={<ResetPassword />} />
+      <Route path="/apply/:token" element={<ApplyPage />} />
       <Route element={<ProtectedRoute />}>
         <Route path="/" element={<Dashboard />} />
         <Route path="/cases/:id" element={<CaseDetail />} />
@@ -28,8 +31,11 @@ export default function App() {
       <Route element={<ProtectedRoute allowedRoles={["OPS_OFFICER"]} />}>
         <Route path="/my-cases" element={<MyCases />} />
       </Route>
-      <Route element={<ProtectedRoute allowedRoles={["OPS_SUPERVISOR", "SUPER_ADMIN"]} />}>
+      <Route element={<ProtectedRoute allowedRoles={["OPS_SUPERVISOR", "ADMIN", "SUPER_ADMIN"]} />}>
         <Route path="/assignment" element={<CaseAssignment />} />
+      </Route>
+      <Route element={<ProtectedRoute requiredPermission="case:generate-link" />}>
+        <Route path="/links" element={<GenerateLink />} />
       </Route>
       <Route element={<ProtectedRoute allowedRoles={["MANAGEMENT", "SUPER_ADMIN"]} />}>
         <Route path="/dashboard/revenue" element={<RevenueDashboard />} />

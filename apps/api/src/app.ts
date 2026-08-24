@@ -9,6 +9,8 @@ import { settingsRouter } from "./routes/settings.js";
 import { casesRouter } from "./routes/cases.js";
 import { complaintsRouter } from "./routes/complaints.js";
 import { dashboardRouter } from "./routes/dashboard.js";
+import { linksRouter } from "./routes/links.js";
+import { applyRouter } from "./routes/apply.js";
 import { UPLOADS_DIR } from "./lib/upload.js";
 
 export function createApp() {
@@ -26,6 +28,8 @@ export function createApp() {
   app.use("/api/cases", casesRouter);
   app.use("/api/complaints", complaintsRouter);
   app.use("/api/dashboard", dashboardRouter);
+  app.use("/api/links", linksRouter);
+  app.use("/api/apply", applyRouter);
 
   return app;
 }

@@ -10,6 +10,13 @@ interface UnassignedCase {
   client: { id: string; name: string; email: string };
   pfa: { name: string };
   pmb: { name: string };
+  clientLink: {
+    id: string;
+    clientName: string | null;
+    clientPhone: string | null;
+    clientEmail: string | null;
+    generatedBy: { id: string; name: string };
+  } | null;
 }
 
 interface OfficerWorkload {
@@ -157,8 +164,20 @@ export default function CaseAssignment() {
                     <td className="px-4 py-3 text-text-primary">{c.client.name}</td>
                     <td className="px-4 py-3 text-text-muted">{c.pfa.name}</td>
                     <td className="px-4 py-3 text-text-muted">{c.pmb.name}</td>
-                    <td className="px-4 py-3 text-text-muted">
-                      {c.intakeSource === "DIGITAL_LINK" ? "Digital" : "Scan"}
+                    <td className="px-4 py-3">
+                      <span
+                        className={`text-xs font-medium rounded-full px-2 py-1 ${
+                          c.intakeSource === "DIGITAL_LINK" ? "bg-accent-light/20 text-accent" : "bg-bg-secondary text-text-muted"
+                        }`}
+                      >
+                        {c.intakeSource === "DIGITAL_LINK" ? "Digital Link" : "Physical Scan"}
+                      </span>
+                      {c.clientLink && (
+                        <div className="text-xs text-text-muted mt-1">
+                          Link by {c.clientLink.generatedBy.name}
+                          {c.clientLink.clientPhone && <> · {c.clientLink.clientPhone}</>}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center gap-2">

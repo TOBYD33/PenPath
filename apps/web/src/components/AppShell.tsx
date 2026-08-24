@@ -1,12 +1,13 @@
 import type { ReactNode } from "react";
 import { NavLink } from "react-router-dom";
-import type { Role } from "@penpath/shared";
+import type { Permission, Role } from "@penpath/shared";
 import { useAuth } from "../lib/auth";
 
-const navItems: { to: string; label: string; roles: Role[] | null }[] = [
+const navItems: { to: string; label: string; roles: Role[] | null; permission?: Permission }[] = [
   { to: "/", label: "Dashboard", roles: null },
   { to: "/my-cases", label: "My Cases", roles: ["OPS_OFFICER"] },
-  { to: "/assignment", label: "Case Assignment", roles: ["OPS_SUPERVISOR", "SUPER_ADMIN"] },
+  { to: "/assignment", label: "Case Assignment", roles: ["OPS_SUPERVISOR", "ADMIN", "SUPER_ADMIN"] },
+  { to: "/links", label: "Generate Link", roles: null, permission: "case:generate-link" },
   { to: "/dashboard/revenue", label: "Revenue", roles: ["MANAGEMENT", "SUPER_ADMIN"] },
   { to: "/dashboard/activity", label: "Activity", roles: ["OPS_SUPERVISOR", "MANAGEMENT", "SUPER_ADMIN"] },
   { to: "/scan-intake", label: "Scan Intake", roles: ["OPS_OFFICER", "OPS_SUPERVISOR", "ADMIN", "SUPER_ADMIN"] },
@@ -21,7 +22,7 @@ const navItems: { to: string; label: string; roles: Role[] | null }[] = [
 ];
 
 export function AppShell({ children }: { children: ReactNode }) {
-  const { user, logout } = useAuth();
+  const { user, permissions, logout } = useAuth();
 
   return (
     <div className="min-h-screen bg-bg-secondary">
@@ -30,7 +31,12 @@ export function AppShell({ children }: { children: ReactNode }) {
           <span className="font-semibold">PenPath</span>
           <nav className="flex items-center gap-4 text-sm">
             {navItems
-              .filter((item) => !item.roles || (user && item.roles.includes(user.role)))
+              .filter((item) => {
+                if (!user) return false;
+                if (item.roles && item.roles.includes(user.role)) return true;
+                if (item.permission && permissions.includes(item.permission)) return true;
+                return !item.roles && !item.permission;
+              })
               .map((item) => (
                 <NavLink
                   key={item.to}

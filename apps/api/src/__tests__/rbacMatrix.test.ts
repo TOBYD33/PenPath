@@ -72,7 +72,9 @@ const probes: Probe[] = [
     name: "view unassigned case queue (case:assign)",
     method: "get",
     path: "/api/cases/unassigned",
-    allowedRoles: ["OPS_SUPERVISOR", "SUPER_ADMIN"],
+    // ADMIN was added to case:assign's default grantees by the client-link
+    // feature ("Admin, Super Admin, and Operation Supervisor can all assign").
+    allowedRoles: ["OPS_SUPERVISOR", "ADMIN", "SUPER_ADMIN"],
   },
   {
     name: "revenue dashboard (dashboard:revenue)",

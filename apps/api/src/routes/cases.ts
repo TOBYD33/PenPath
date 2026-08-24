@@ -21,28 +21,20 @@ import { applyStatusTransitions } from "../lib/caseWorkflow.js";
 import { generateCasePacketPdf, generateFormSetPdf } from "../lib/pdf.js";
 import { notify } from "../lib/notify.js";
 import { computeFeeTotal, getOrCreateFeeDefault } from "../lib/feeEngine.js";
+import {
+  assertOneActiveCase,
+  caseDetailInclude,
+  caseListInclude,
+  createCaseWithForms,
+  getFormTemplates,
+  isOneActiveCaseViolation,
+  validateIntakeForms,
+  withClientLabel,
+} from "../lib/caseIntake.js";
 
 export const casesRouter = Router();
 
 casesRouter.use(requireAuth);
-
-const caseListInclude = {
-  client: { select: { id: true, name: true, email: true } },
-  pfa: { select: { id: true, name: true } },
-  pmb: { select: { id: true, name: true } },
-  assignedOfficer: { select: { id: true, name: true } },
-} as const;
-
-const caseDetailInclude = {
-  ...caseListInclude,
-  formSubmissions: { orderBy: [{ formType: "asc" as const }, { version: "desc" as const }] },
-  documents: { orderBy: { createdAt: "desc" as const } },
-  statusHistory: { orderBy: { createdAt: "desc" as const } },
-};
-
-function withClientLabel<T extends { status: string }>(kase: T) {
-  return { ...kase, clientStatusLabel: CLIENT_STATUS_LABELS[kase.status as keyof typeof CLIENT_STATUS_LABELS] };
-}
 
 casesRouter.get("/", async (req, res) => {
   const role = req.user!.role;
@@ -148,7 +140,7 @@ casesRouter.post("/:id/assign", requirePermission("case:assign"), async (req, re
 
   const updated = await prisma.case.update({
     where: { id: kase.id },
-    data: { assignedOfficerId: officer.id },
+    data: { assignedOfficerId: officer.id, assignedById: req.user!.sub },
     include: caseListInclude,
   });
 
@@ -158,7 +150,7 @@ casesRouter.post("/:id/assign", requirePermission("case:assign"), async (req, re
     entityType: "Case",
     entityId: kase.id,
     oldValue: { assignedOfficerId: kase.assignedOfficerId },
-    newValue: { assignedOfficerId: officer.id },
+    newValue: { assignedOfficerId: officer.id, assignedById: req.user!.sub },
   });
 
   res.json({ case: withClientLabel(updated) });
@@ -170,95 +162,6 @@ casesRouter.get("/:id", async (req, res) => {
   if (!canReadCase(req.user!, kase)) return res.status(403).json({ error: "Forbidden" });
   res.json({ case: withClientLabel(kase) });
 });
-
-async function getFormTemplates(pfaId: string, pmbId: string) {
-  const [pfa, pmb] = await Promise.all([
-    prisma.institution.findUnique({ where: { id: pfaId } }),
-    prisma.institution.findUnique({ where: { id: pmbId } }),
-  ]);
-  if (!pfa || pfa.type !== "PFA" || !pfa.active) return { error: "Invalid or inactive PFA selected" as const };
-  if (!pmb || pmb.type !== "PMB" || !pmb.active) return { error: "Invalid or inactive PMB selected" as const };
-  return { pfa, pmb };
-}
-
-function validateIntakeForms(
-  bioData: unknown,
-  pfaForm: unknown,
-  pmbForm: unknown,
-  pfaTemplate: FormTemplate,
-  pmbTemplate: FormTemplate,
-) {
-  const errors = {
-    bioData: validateFormData(BIO_DATA_TEMPLATE, bioData),
-    pfaForm: validateFormData(pfaTemplate, pfaForm),
-    pmbForm: validateFormData(pmbTemplate, pmbForm),
-  };
-  const hasErrors = errors.bioData.length || errors.pfaForm.length || errors.pmbForm.length;
-  return hasErrors ? errors : null;
-}
-
-async function assertOneActiveCase(clientId: string): Promise<boolean> {
-  const existing = await prisma.case.findFirst({ where: { clientId, active: true } });
-  return !existing;
-}
-
-const ONE_ACTIVE_CASE_MESSAGE = "This client already has an active application. Only one is allowed at a time.";
-
-/** True if `err` is Postgres rejecting our partial unique index on
- * (clientId) WHERE active — the DB-level backstop for business rule 1,
- * closing the check-then-insert race the app-level assertOneActiveCase
- * check alone can't fully prevent under concurrent requests. Case has no
- * other unique constraint besides its primary key, so any P2002 thrown
- * from creating one is this constraint. */
-function isOneActiveCaseViolation(err: unknown): boolean {
-  return typeof err === "object" && err !== null && "code" in err && (err as { code: unknown }).code === "P2002";
-}
-
-async function createCaseWithForms(params: {
-  clientId: string;
-  pfaId: string;
-  pmbId: string;
-  intakeSource: "DIGITAL_LINK" | "PHYSICAL_SCAN";
-  bioData: unknown;
-  pfaForm: unknown;
-  pmbForm: unknown;
-  createdBy: string;
-}) {
-  const feeDefault = await getOrCreateFeeDefault();
-
-  const kase = await prisma.case.create({
-    data: {
-      clientId: params.clientId,
-      pfaId: params.pfaId,
-      pmbId: params.pmbId,
-      intakeSource: params.intakeSource,
-      feeFlat: feeDefault.feeFlat,
-      feePercent: feeDefault.feePercent,
-      feeBasis: feeDefault.feeBasis,
-      formSubmissions: {
-        create: [
-          { formType: "bio_data", data: params.bioData as object, version: 1 },
-          { formType: "pfa_form", data: params.pfaForm as object, version: 1 },
-          { formType: "pmb_form", data: params.pmbForm as object, version: 1 },
-        ],
-      },
-      statusHistory: {
-        create: [{ toStatus: "NEW_APPLICATION", changedBy: params.createdBy }],
-      },
-    },
-    include: caseDetailInclude,
-  });
-
-  await writeAuditLog({
-    userId: params.createdBy,
-    action: "CASE_CREATED",
-    entityType: "Case",
-    entityId: kase.id,
-    newValue: { id: kase.id, intakeSource: kase.intakeSource, status: kase.status },
-  });
-
-  return kase;
-}
 
 const intakeSchema = z.object({
   pfaId: z.string().min(1),

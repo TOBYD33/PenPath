@@ -112,3 +112,6 @@ export const EDITABLE_CASE_STATUSES: CaseStatus[] = [
   "BIO_DATA_SUBMITTED",
   "UNDER_OPS_REVIEW",
 ];
+
+export const LINK_STATUSES = ["UNUSED", "USED", "EXPIRED", "REVOKED"] as const;
+export type LinkStatus = (typeof LINK_STATUSES)[number];
