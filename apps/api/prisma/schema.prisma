@@ -27,6 +27,7 @@ model User {
   complaintsRaised Complaint[] @relation("ComplaintRaisedBy")
   complaintsAssigned Complaint[] @relation("ComplaintAssignedOfficer")
   complaintsResolved Complaint[] @relation("ComplaintResolvedBy")
+  passwordResetTokens PasswordResetToken[]
 }
 
 enum Role {
@@ -224,4 +225,17 @@ model AuditLog {
   oldValue   Json?
   newValue   Json?
   createdAt  DateTime @default(now())
+}
+
+/// Self-service password reset. Only the SHA-256 hash of the raw token is
+/// stored, matching the passwordHash pattern used elsewhere — the raw
+/// token exists only in the emailed link and is never persisted.
+model PasswordResetToken {
+  id        String    @id @default(cuid())
+  userId    String
+  user      User      @relation(fields: [userId], references: [id])
+  tokenHash String    @unique
+  expiresAt DateTime
+  usedAt    DateTime?
+  createdAt DateTime  @default(now())
 }

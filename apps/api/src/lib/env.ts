@@ -12,6 +12,7 @@ export const env = {
   JWT_EXPIRES_IN: process.env.JWT_EXPIRES_IN ?? "8h",
   PORT: Number(process.env.PORT ?? 4000),
   CORS_ORIGIN: process.env.CORS_ORIGIN ?? "http://localhost:5173",
+  FRONTEND_URL: process.env.FRONTEND_URL ?? "http://localhost:5173",
 
   // Notifications (Phase 10) — all optional. Any unset provider falls back
   // to a clearly-marked console stub, per CLAUDE.md Section 8 instructions.
