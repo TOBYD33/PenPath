@@ -554,7 +554,7 @@ casesRouter.post("/:id/ready-for-pfa", async (req, res) => {
     newValue: { status: updated.status, documentId: document.id },
   });
 
-  await notify({ to: kase.client.email, subject: "Application submitted to your PFA", body: `Your application has been submitted to ${kase.pfa.name}.` });
+  await notify({ to: kase.client.email, phone: kase.client.phone, subject: "Application submitted to your PFA", body: `Your application has been submitted to ${kase.pfa.name}.` });
 
   res.json({ case: withClientLabel(updated), document });
 });
@@ -591,7 +591,7 @@ casesRouter.post("/:id/pfa-outcome", async (req, res) => {
     newValue: { status: updated.status },
   });
 
-  await notify({ to: kase.client.email, subject: "Update on your PFA submission", body: `Status: ${CLIENT_STATUS_LABELS[updated.status]}` });
+  await notify({ to: kase.client.email, phone: kase.client.phone, subject: "Update on your PFA submission", body: `Status: ${CLIENT_STATUS_LABELS[updated.status]}` });
 
   res.json({ case: withClientLabel(updated) });
 });
@@ -657,7 +657,7 @@ casesRouter.post("/:id/pmb-outcome", async (req, res) => {
     newValue: { status: updated.status },
   });
 
-  await notify({ to: kase.client.email, subject: "Update on your Mortgage Bank submission", body: `Status: ${CLIENT_STATUS_LABELS[updated.status]}` });
+  await notify({ to: kase.client.email, phone: kase.client.phone, subject: "Update on your Mortgage Bank submission", body: `Status: ${CLIENT_STATUS_LABELS[updated.status]}` });
 
   res.json({ case: withClientLabel(updated) });
 });
@@ -691,7 +691,7 @@ casesRouter.post("/:id/confirm-funds-received", requireRole("CLIENT"), async (re
   if (kase.assignedOfficerId) {
     const officer = await prisma.user.findUnique({ where: { id: kase.assignedOfficerId } });
     if (officer) {
-      await notify({ to: officer.email, subject: "Client confirmed funds released", body: `Case ${kase.id} is ready for the transfer form step.` });
+      await notify({ to: officer.email, phone: officer.phone, subject: "Client confirmed funds released", body: `Case ${kase.id} is ready for the transfer form step.` });
     }
   }
 
@@ -723,7 +723,7 @@ casesRouter.post("/:id/trigger-transfer-form", async (req, res) => {
     newValue: { status: updated.status },
   });
 
-  await notify({ to: kase.client.email, subject: "Please complete your transfer form", body: "We need your bank details to complete the mortgage equity transfer." });
+  await notify({ to: kase.client.email, phone: kase.client.phone, subject: "Please complete your transfer form", body: "We need your bank details to complete the mortgage equity transfer." });
 
   res.json({ case: withClientLabel(updated) });
 });
@@ -855,7 +855,7 @@ casesRouter.post("/:id/process-payout", requireRole("MANAGEMENT", "SUPER_ADMIN")
     newValue: { status: updated.status },
   });
 
-  await notify({ to: kase.client.email, subject: "Your case is closed", body: "Your mortgage equity payout has been processed. Thank you." });
+  await notify({ to: kase.client.email, phone: kase.client.phone, subject: "Your case is closed", body: "Your mortgage equity payout has been processed. Thank you." });
 
   res.json({ case: withClientLabel(updated) });
 });
