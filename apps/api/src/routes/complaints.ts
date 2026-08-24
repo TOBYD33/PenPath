@@ -105,7 +105,11 @@ complaintsRouter.patch("/:id", requirePermission("complaint:manage"), async (req
 
   const updated = await prisma.complaint.update({
     where: { id: complaint.id },
-    data: { status: parsed.data.status, resolutionNote: parsed.data.resolutionNote },
+    data: {
+      status: parsed.data.status,
+      resolutionNote: parsed.data.resolutionNote,
+      resolvedById: parsed.data.status === "RESOLVED" ? req.user!.sub : undefined,
+    },
     include: complaintInclude,
   });
 

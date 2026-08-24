@@ -7,6 +7,8 @@ const navItems: { to: string; label: string; roles: Role[] | null }[] = [
   { to: "/", label: "Dashboard", roles: null },
   { to: "/my-cases", label: "My Cases", roles: ["OPS_OFFICER"] },
   { to: "/assignment", label: "Case Assignment", roles: ["OPS_SUPERVISOR", "SUPER_ADMIN"] },
+  { to: "/dashboard/revenue", label: "Revenue", roles: ["MANAGEMENT", "SUPER_ADMIN"] },
+  { to: "/dashboard/activity", label: "Activity", roles: ["OPS_SUPERVISOR", "MANAGEMENT", "SUPER_ADMIN"] },
   { to: "/scan-intake", label: "Scan Intake", roles: ["OPS_OFFICER", "OPS_SUPERVISOR", "ADMIN", "SUPER_ADMIN"] },
   {
     to: "/complaints",

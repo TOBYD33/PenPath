@@ -9,6 +9,8 @@ import MyCases from "./pages/ops/MyCases";
 import CaseAssignment from "./pages/supervisor/CaseAssignment";
 import CaseDetail from "./pages/CaseDetail";
 import Complaints from "./pages/Complaints";
+import RevenueDashboard from "./pages/management/RevenueDashboard";
+import ActivityDashboard from "./pages/management/ActivityDashboard";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
 export default function App() {
@@ -24,6 +26,12 @@ export default function App() {
       </Route>
       <Route element={<ProtectedRoute allowedRoles={["OPS_SUPERVISOR", "SUPER_ADMIN"]} />}>
         <Route path="/assignment" element={<CaseAssignment />} />
+      </Route>
+      <Route element={<ProtectedRoute allowedRoles={["MANAGEMENT", "SUPER_ADMIN"]} />}>
+        <Route path="/dashboard/revenue" element={<RevenueDashboard />} />
+      </Route>
+      <Route element={<ProtectedRoute allowedRoles={["OPS_SUPERVISOR", "MANAGEMENT", "SUPER_ADMIN"]} />}>
+        <Route path="/dashboard/activity" element={<ActivityDashboard />} />
       </Route>
       <Route element={<ProtectedRoute allowedRoles={["OPS_OFFICER", "OPS_SUPERVISOR", "ADMIN", "SUPER_ADMIN"]} />}>
         <Route path="/scan-intake" element={<ScanIntake />} />

@@ -37,4 +37,23 @@ export const api = {
     request<T>(path, { method: "PUT", body: body ? JSON.stringify(body) : undefined }),
   postForm: <T>(path: string, formData: FormData) =>
     request<T>(path, { method: "POST", body: formData }, false),
+  downloadFile: async (path: string, filename: string) => {
+    const token = localStorage.getItem("penpath_token");
+    const res = await fetch(`${API_BASE}${path}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    });
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({ error: res.statusText }));
+      throw new ApiError(body.error ?? "Download failed", res.status);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  },
 };

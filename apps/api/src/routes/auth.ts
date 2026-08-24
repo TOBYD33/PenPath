@@ -5,6 +5,7 @@ import { prisma } from "../lib/prisma.js";
 import { signToken } from "../lib/jwt.js";
 import { requireAuth } from "../middleware/auth.js";
 import { getEffectivePermissions } from "../lib/permissions.js";
+import { writeAuditLog } from "../lib/audit.js";
 
 export const authRouter = Router();
 
@@ -29,6 +30,9 @@ authRouter.post("/login", async (req, res) => {
   if (!valid) {
     return res.status(401).json({ error: "Invalid credentials" });
   }
+
+  await prisma.user.update({ where: { id: user.id }, data: { lastLoginAt: new Date() } });
+  await writeAuditLog({ userId: user.id, action: "LOGIN", entityType: "User", entityId: user.id });
 
   const token = signToken({ sub: user.id, role: user.role, email: user.email });
   res.json({
