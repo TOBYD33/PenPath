@@ -1,5 +1,13 @@
 const API_BASE = import.meta.env.VITE_API_URL ?? "http://localhost:4000";
 
+// ngrok's free tier shows an interstitial warning page to requests that look
+// browser-originated unless this header is present. Harmless against any
+// other host (e.g. Render in production) — only relevant while demoing
+// through a tunnel.
+const NGROK_BYPASS_HEADERS: Record<string, string> = API_BASE.includes("ngrok")
+  ? { "ngrok-skip-browser-warning": "true" }
+  : {};
+
 export class ApiError extends Error {
   constructor(
     message: string,
@@ -14,6 +22,7 @@ async function request<T>(path: string, options: RequestInit = {}, jsonBody = tr
   const res = await fetch(`${API_BASE}${path}`, {
     ...options,
     headers: {
+      ...NGROK_BYPASS_HEADERS,
       ...(jsonBody ? { "Content-Type": "application/json" } : {}),
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
       ...options.headers,
@@ -40,7 +49,7 @@ export const api = {
   downloadFile: async (path: string, filename: string) => {
     const token = localStorage.getItem("penpath_token");
     const res = await fetch(`${API_BASE}${path}`, {
-      headers: token ? { Authorization: `Bearer ${token}` } : {},
+      headers: { ...NGROK_BYPASS_HEADERS, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
     });
     if (!res.ok) {
       const body = await res.json().catch(() => ({ error: res.statusText }));
