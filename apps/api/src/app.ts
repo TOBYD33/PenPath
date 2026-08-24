@@ -7,6 +7,7 @@ import { auditLogRouter } from "./routes/auditLog.js";
 import { institutionsRouter } from "./routes/institutions.js";
 import { settingsRouter } from "./routes/settings.js";
 import { casesRouter } from "./routes/cases.js";
+import { complaintsRouter } from "./routes/complaints.js";
 import { UPLOADS_DIR } from "./lib/upload.js";
 
 export function createApp() {
@@ -22,6 +23,7 @@ export function createApp() {
   app.use("/api/institutions", institutionsRouter);
   app.use("/api/settings", settingsRouter);
   app.use("/api/cases", casesRouter);
+  app.use("/api/complaints", complaintsRouter);
 
   return app;
 }

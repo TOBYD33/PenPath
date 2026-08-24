@@ -8,6 +8,7 @@ import ScanIntake from "./pages/ops/ScanIntake";
 import MyCases from "./pages/ops/MyCases";
 import CaseAssignment from "./pages/supervisor/CaseAssignment";
 import CaseDetail from "./pages/CaseDetail";
+import Complaints from "./pages/Complaints";
 import { ProtectedRoute } from "./components/ProtectedRoute";
 
 export default function App() {
@@ -26,6 +27,15 @@ export default function App() {
       </Route>
       <Route element={<ProtectedRoute allowedRoles={["OPS_OFFICER", "OPS_SUPERVISOR", "ADMIN", "SUPER_ADMIN"]} />}>
         <Route path="/scan-intake" element={<ScanIntake />} />
+      </Route>
+      <Route
+        element={
+          <ProtectedRoute
+            allowedRoles={["CUSTOMER_CARE", "OPS_OFFICER", "OPS_SUPERVISOR", "ACCOUNTING", "MANAGEMENT", "ADMIN", "SUPER_ADMIN"]}
+          />
+        }
+      >
+        <Route path="/complaints" element={<Complaints />} />
       </Route>
       <Route element={<ProtectedRoute allowedRoles={["ADMIN", "SUPER_ADMIN"]} />}>
         <Route path="/admin/institutions" element={<Institutions />} />

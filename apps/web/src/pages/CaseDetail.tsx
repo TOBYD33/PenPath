@@ -171,8 +171,107 @@ export default function CaseDetail() {
             ))}
           </ol>
         </div>
+
+        <ComplaintsPanel caseId={data.id} />
       </div>
     </AppShell>
+  );
+}
+
+interface Complaint {
+  id: string;
+  description: string;
+  status: "OPEN" | "IN_PROGRESS" | "RESOLVED";
+  resolutionNote: string | null;
+  createdAt: string;
+  raisedBy: { name: string; role: string };
+}
+
+const COMPLAINT_STATUS_STYLES: Record<Complaint["status"], string> = {
+  OPEN: "bg-status-error/10 text-status-error",
+  IN_PROGRESS: "bg-status-warning/10 text-status-warning",
+  RESOLVED: "bg-status-success/10 text-status-success",
+};
+
+export function ComplaintsPanel({ caseId }: { caseId: string }) {
+  const [complaints, setComplaints] = useState<Complaint[] | null>(null);
+  const [description, setDescription] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [submitting, setSubmitting] = useState(false);
+
+  async function reload() {
+    try {
+      const data = await api.get<{ complaints: Complaint[] }>(`/api/complaints?caseId=${caseId}`);
+      setComplaints(data.complaints);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to load complaints");
+    }
+  }
+
+  useEffect(() => {
+    reload();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [caseId]);
+
+  async function submit() {
+    if (!description.trim()) return;
+    setSubmitting(true);
+    setError(null);
+    try {
+      await api.post("/api/complaints", { caseId, description });
+      setDescription("");
+      await reload();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to raise complaint");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  return (
+    <div className="bg-bg-base border border-border rounded-lg p-6">
+      <h2 className="text-sm font-semibold text-text-primary mb-3">Complaints</h2>
+      {error && <p className="text-sm text-status-error mb-2">{error}</p>}
+
+      {complaints === null ? (
+        <p className="text-sm text-text-muted">Loading…</p>
+      ) : complaints.length === 0 ? (
+        <p className="text-sm text-text-muted mb-3">None yet.</p>
+      ) : (
+        <ul className="space-y-2 mb-4">
+          {complaints.map((c) => (
+            <li key={c.id} className="text-sm border border-border rounded-md p-2">
+              <div className="flex items-center justify-between">
+                <span className="text-text-primary">{c.description}</span>
+                <span className={`text-xs font-medium rounded-full px-2 py-0.5 ${COMPLAINT_STATUS_STYLES[c.status]}`}>
+                  {c.status.replaceAll("_", " ")}
+                </span>
+              </div>
+              <div className="text-xs text-text-muted mt-1">
+                {c.raisedBy.name} ({c.raisedBy.role}) · {new Date(c.createdAt).toLocaleString()}
+              </div>
+              {c.resolutionNote && <div className="text-xs text-text-muted mt-1">Resolution: {c.resolutionNote}</div>}
+            </li>
+          ))}
+        </ul>
+      )}
+
+      <div className="flex items-center gap-2">
+        <input
+          value={description}
+          onChange={(e) => setDescription(e.target.value)}
+          placeholder="Describe the issue…"
+          className="border border-border rounded-md px-3 py-1.5 text-sm flex-1"
+        />
+        <button
+          onClick={submit}
+          disabled={submitting || !description.trim()}
+          className="bg-brand-primary hover:bg-brand-dark text-white text-sm font-medium rounded-md px-4 py-2 disabled:opacity-60"
+        >
+          Raise complaint
+        </button>
+      </div>
+    </div>
   );
 }
 

@@ -2,6 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import type { CaseStatus } from "@penpath/shared";
 import { api, ApiError } from "../../lib/api";
 import { IntakeForm } from "./IntakeForm";
+import { ComplaintsPanel } from "../CaseDetail";
 
 interface ClientCase {
   id: string;
@@ -53,7 +54,8 @@ export default function ClientHome() {
   }
 
   return (
-    <div className="bg-bg-base border border-border rounded-lg p-6 max-w-lg">
+    <div className="max-w-lg space-y-6">
+    <div className="bg-bg-base border border-border rounded-lg p-6">
       <h2 className="text-lg font-semibold text-text-primary mb-1">Your application</h2>
       <p className="text-sm text-text-muted mb-4">
         {activeCase.pfa.name} · {activeCase.pmb.name}
@@ -86,6 +88,10 @@ export default function ClientHome() {
           <TransferFormPanel caseId={activeCase.id} onSubmitted={reload} />
         </div>
       )}
+
+    </div>
+
+      <ComplaintsPanel caseId={activeCase.id} />
     </div>
   );
 }
