@@ -18,7 +18,7 @@ import { canEditCaseForms, canReadCase, isAssignedOrOverride } from "../lib/case
 import { writeAuditLog } from "../lib/audit.js";
 import { upload } from "../lib/upload.js";
 import { applyStatusTransitions } from "../lib/caseWorkflow.js";
-import { generateCasePacketPdf } from "../lib/pdf.js";
+import { generateCasePacketPdf, generateFormSetPdf } from "../lib/pdf.js";
 import { notify } from "../lib/notify.js";
 import { computeFeeTotal, getOrCreateFeeDefault } from "../lib/feeEngine.js";
 
@@ -386,6 +386,47 @@ casesRouter.post(
     res.status(201).json({ case: { ...withClientLabel(kase), documents: [document] } });
   },
 );
+
+/**
+ * On-demand PDF for a single form set — any historical version, not just
+ * the latest (Phase 9: "PDF generation for every form set"). Generated
+ * fresh each time rather than persisted, since it's fully derivable from
+ * the FormSubmission row.
+ */
+casesRouter.get("/:id/form-submissions/:formType/pdf", async (req, res) => {
+  const formType = req.params.formType as FormType;
+  if (!(FORM_TYPES as readonly string[]).includes(formType)) {
+    return res.status(400).json({ error: "Unknown form type" });
+  }
+
+  const kase = await prisma.case.findUnique({
+    where: { id: req.params.id },
+    include: { client: true, pfa: true, pmb: true },
+  });
+  if (!kase) return res.status(404).json({ error: "Case not found" });
+  if (!canReadCase(req.user!, kase)) return res.status(403).json({ error: "Forbidden" });
+
+  const requestedVersion = req.query.version ? Number(req.query.version) : undefined;
+  const submission = await prisma.formSubmission.findFirst({
+    where: { caseId: kase.id, formType, ...(requestedVersion ? { version: requestedVersion } : {}) },
+    orderBy: { version: "desc" },
+  });
+  if (!submission) return res.status(404).json({ error: "No submission found for this form type/version" });
+
+  const formLabel = formType === "bio_data" ? "Bio Data" : formType === "pfa_form" ? `${kase.pfa.name} Form` : `${kase.pmb.name} Form`;
+
+  const pdf = await generateFormSetPdf({
+    caseId: kase.id,
+    clientName: kase.client.name,
+    formLabel,
+    version: submission.version,
+    data: submission.data as Record<string, unknown>,
+  });
+
+  res.setHeader("Content-Type", "application/pdf");
+  res.setHeader("Content-Disposition", `attachment; filename=${formType}-v${submission.version}.pdf`);
+  res.send(Buffer.from(pdf));
+});
 
 const editFormSubmissionSchema = z.object({ data: z.record(z.unknown()) });
 

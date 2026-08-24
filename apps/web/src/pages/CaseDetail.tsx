@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useParams } from "react-router-dom";
-import type { CaseStatus } from "@penpath/shared";
+import { diffFormData, type CaseStatus } from "@penpath/shared";
 import { AppShell } from "../components/AppShell";
 import { api, ApiError } from "../lib/api";
 import { useAuth } from "../lib/auth";
@@ -137,6 +137,8 @@ export default function CaseDetail() {
           onSaved={reload}
           onError={setError}
         />
+
+        <FormSubmissionsPanel caseId={data.id} formSubmissions={data.formSubmissions} pfaName={data.pfa.name} pmbName={data.pmb.name} />
 
         <div className="bg-bg-base border border-border rounded-lg p-6">
           <h2 className="text-sm font-semibold text-text-primary mb-3">Documents</h2>
@@ -387,6 +389,139 @@ function WorkflowActions({
   }
 
   return null;
+}
+
+const FORM_TYPE_LABELS: Record<string, string> = {
+  bio_data: "Bio Data",
+  pfa_form: "PFA Form",
+  pmb_form: "PMB Form",
+};
+
+function FormSubmissionsPanel({
+  caseId,
+  formSubmissions,
+  pfaName,
+  pmbName,
+}: {
+  caseId: string;
+  formSubmissions: FormSubmission[];
+  pfaName: string;
+  pmbName: string;
+}) {
+  const [expandedType, setExpandedType] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const byType = new Map<string, FormSubmission[]>();
+  for (const fs of formSubmissions) {
+    const list = byType.get(fs.formType) ?? [];
+    list.push(fs);
+    byType.set(fs.formType, list);
+  }
+  // Each formType's versions arrive newest-first from the API; oldest-first is easier to diff against.
+  for (const list of byType.values()) list.sort((a, b) => a.version - b.version);
+
+  const labelFor = (formType: string) =>
+    formType === "pfa_form" ? `${pfaName} Form` : formType === "pmb_form" ? `${pmbName} Form` : FORM_TYPE_LABELS[formType] ?? formType;
+
+  async function downloadPdf(formType: string, version?: number) {
+    setError(null);
+    try {
+      const q = version ? `?version=${version}` : "";
+      await api.downloadFile(`/api/cases/${caseId}/form-submissions/${formType}/pdf${q}`, `${formType}-v${version ?? "latest"}.pdf`);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Failed to download PDF");
+    }
+  }
+
+  if (byType.size === 0) return null;
+
+  return (
+    <div className="bg-bg-base border border-border rounded-lg p-6">
+      <h2 className="text-sm font-semibold text-text-primary mb-3">Form Submissions</h2>
+      {error && <p className="text-sm text-status-error mb-2">{error}</p>}
+
+      <div className="space-y-4">
+        {Array.from(byType.entries()).map(([formType, versions]) => {
+          const latest = versions[versions.length - 1];
+          return (
+            <div key={formType} className="border border-border rounded-md p-3">
+              <div className="flex items-center justify-between">
+                <div>
+                  <span className="text-sm font-medium text-text-primary">{labelFor(formType)}</span>
+                  <span className="ml-2 text-xs text-text-muted">v{latest.version}</span>
+                </div>
+                <div className="flex items-center gap-3">
+                  <button onClick={() => downloadPdf(formType, latest.version)} className="text-accent hover:text-accent-light text-xs font-medium">
+                    Download PDF
+                  </button>
+                  {versions.length > 1 && (
+                    <button
+                      onClick={() => setExpandedType(expandedType === formType ? null : formType)}
+                      className="text-brand-primary hover:text-brand-dark text-xs font-medium"
+                    >
+                      {expandedType === formType ? "Hide history" : `Version history (${versions.length})`}
+                    </button>
+                  )}
+                </div>
+              </div>
+
+              <dl className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1">
+                {Object.entries(latest.data).map(([key, value]) => (
+                  <div key={key} className="text-xs">
+                    <dt className="text-text-muted inline">{key.replaceAll("_", " ")}: </dt>
+                    <dd className="text-text-primary inline">{String(value)}</dd>
+                  </div>
+                ))}
+              </dl>
+
+              {expandedType === formType && (
+                <div className="mt-3 pt-3 border-t border-border space-y-3">
+                  {versions.slice(1).map((version, i) => {
+                    const previous = versions[i];
+                    const diffs = diffFormData(
+                      previous.data as Record<string, unknown>,
+                      version.data as Record<string, unknown>,
+                    );
+                    return (
+                      <div key={version.id} className="text-xs">
+                        <div className="flex items-center justify-between mb-1">
+                          <span className="font-medium text-text-primary">
+                            v{previous.version} → v{version.version}
+                          </span>
+                          <button onClick={() => downloadPdf(formType, version.version)} className="text-accent hover:text-accent-light">
+                            PDF
+                          </button>
+                        </div>
+                        {diffs.length === 0 ? (
+                          <p className="text-text-muted">No field changes.</p>
+                        ) : (
+                          <ul className="space-y-0.5">
+                            {diffs.map((d) => (
+                              <li key={d.key}>
+                                <span className="text-text-muted">{d.key.replaceAll("_", " ")}: </span>
+                                {d.kind === "added" && <span className="text-status-success">+ {String(d.to)}</span>}
+                                {d.kind === "removed" && <span className="text-status-error line-through">{String(d.from)}</span>}
+                                {d.kind === "changed" && (
+                                  <span>
+                                    <span className="text-status-error line-through">{String(d.from)}</span>{" "}
+                                    <span className="text-status-success">→ {String(d.to)}</span>
+                                  </span>
+                                )}
+                              </li>
+                            ))}
+                          </ul>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
 }
 
 function FinancialsPanel({
