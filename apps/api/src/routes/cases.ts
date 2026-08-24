@@ -202,6 +202,18 @@ async function assertOneActiveCase(clientId: string): Promise<boolean> {
   return !existing;
 }
 
+const ONE_ACTIVE_CASE_MESSAGE = "This client already has an active application. Only one is allowed at a time.";
+
+/** True if `err` is Postgres rejecting our partial unique index on
+ * (clientId) WHERE active — the DB-level backstop for business rule 1,
+ * closing the check-then-insert race the app-level assertOneActiveCase
+ * check alone can't fully prevent under concurrent requests. Case has no
+ * other unique constraint besides its primary key, so any P2002 thrown
+ * from creating one is this constraint. */
+function isOneActiveCaseViolation(err: unknown): boolean {
+  return typeof err === "object" && err !== null && "code" in err && (err as { code: unknown }).code === "P2002";
+}
+
 async function createCaseWithForms(params: {
   clientId: string;
   pfaId: string;
@@ -280,18 +292,24 @@ casesRouter.post("/intake", requireRole("CLIENT"), async (req, res) => {
   );
   if (formErrors) return res.status(400).json({ error: "Form validation failed", details: formErrors });
 
-  const kase = await createCaseWithForms({
-    clientId: req.user!.sub,
-    pfaId,
-    pmbId,
-    intakeSource: "DIGITAL_LINK",
-    bioData,
-    pfaForm,
-    pmbForm,
-    createdBy: req.user!.sub,
-  });
-
-  res.status(201).json({ case: withClientLabel(kase) });
+  try {
+    const kase = await createCaseWithForms({
+      clientId: req.user!.sub,
+      pfaId,
+      pmbId,
+      intakeSource: "DIGITAL_LINK",
+      bioData,
+      pfaForm,
+      pmbForm,
+      createdBy: req.user!.sub,
+    });
+    res.status(201).json({ case: withClientLabel(kase) });
+  } catch (err) {
+    if (isOneActiveCaseViolation(err)) {
+      return res.status(409).json({ error: "You already have an active application. Only one is allowed at a time." });
+    }
+    throw err;
+  }
 });
 
 const scanIntakeBodySchema = z.object({
@@ -360,16 +378,24 @@ casesRouter.post(
       return res.status(409).json({ error: "This client already has an active application." });
     }
 
-    const kase = await createCaseWithForms({
-      clientId: client.id,
-      pfaId,
-      pmbId,
-      intakeSource: "PHYSICAL_SCAN",
-      bioData,
-      pfaForm,
-      pmbForm,
-      createdBy: req.user!.sub,
-    });
+    let kase;
+    try {
+      kase = await createCaseWithForms({
+        clientId: client.id,
+        pfaId,
+        pmbId,
+        intakeSource: "PHYSICAL_SCAN",
+        bioData,
+        pfaForm,
+        pmbForm,
+        createdBy: req.user!.sub,
+      });
+    } catch (err) {
+      if (isOneActiveCaseViolation(err)) {
+        return res.status(409).json({ error: "This client already has an active application." });
+      }
+      throw err;
+    }
 
     const document = await prisma.document.create({
       data: { caseId: kase.id, type: "scanned_original", url: `/uploads/${req.file.filename}` },
